@@ -1,0 +1,6 @@
+torch
+swig
+matplotlib
+gymnasium
+gymnasium[mujoco]
+gymnasium[other]
