@@ -52,6 +52,7 @@ model = nn.Sequential(
 ).to(device)
 
 optimizer = optim.AdamW(model.parameters(), lr=LR, amsgrad=True)
+criterion = nn.MSELoss()
 memory = ReplayMemory(10000)
 
 steps_done = 0
@@ -63,13 +64,13 @@ def select_action(state):
 
     if random.random() > eps_threshold:
         with torch.no_grad():
-            return model(state).cpu().squeeze(0)
+            return model(state).squeeze(0)
     else:
         return torch.tensor(env.action_space.sample(), device=device, dtype=torch.float32)
 
-def optimize_model():
+def optimize_model(optimizer, criterion):
     if len(memory) < BATCH_SIZE:
-        return
+        return 0 # no loss while we're batching
 
     transitions = memory.sample(BATCH_SIZE)
     batch = Transition(*zip(*transitions))
@@ -87,13 +88,14 @@ def optimize_model():
         next_state_values[non_final_mask] = model(non_final_next_states).max(1).values
 
     expected_state_action_values = (next_state_values * GAMMA) + reward_batch
-    criterion = nn.MSELoss()
     loss = criterion(state_action_values, action_batch)
 
     optimizer.zero_grad()
     loss.backward()
     torch.nn.utils.clip_grad_value_(model.parameters(), 100)
     optimizer.step()
+
+    return loss.item()
 
 # Define an Agent class
 # This is needed since prior we had an inline object 
@@ -113,7 +115,7 @@ class Agent:
 
         if random.random() > eps_threshold:
             with torch.no_grad():
-                return self.model(state).cpu().squeeze(0)
+                return self.model(state).squeeze(0)
         else:
             return torch.tensor(env.action_space.sample(), device=self.device, dtype=torch.float32)
 
@@ -121,13 +123,14 @@ class Agent:
 agent = Agent(model, device)
 
 # Training loop
-num_episodes = 50
+num_episodes = 100
 episode_durations = []
 
 for i_episode in range(num_episodes):
     state, info = env.reset()
     state = torch.tensor(state, dtype=torch.float32, device=device).unsqueeze(0)
     print(f"The current episode is: {i_episode}")
+    episode_loss = 0
     for t in count():
         action = select_action(state)
         observation, reward, terminated, truncated, _ = env.step(action.cpu().numpy())
@@ -138,10 +141,11 @@ for i_episode in range(num_episodes):
         memory.push(state, action, next_state, reward)
 
         state = next_state
-        optimize_model()
+        episode_loss += optimize_model(optimizer, criterion)
 
         if done:
             episode_durations.append(t + 1)
+            print(f"Episode loss: {episode_loss}")
             break
 
 print("Training completed. Episode durations:", episode_durations)
