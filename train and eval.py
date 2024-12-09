@@ -1,4 +1,4 @@
-import ddpg
+import sddpg
 import gymnasium as gym
 from gymnasium.wrappers import RecordEpisodeStatistics, RecordVideo
 
@@ -6,13 +6,14 @@ import math
 import os
 import random
 from tqdm import tqdm
+import numpy as np
 
 import torch
 import torch.nn as nn
 import torch.optim as optim
 import matplotlib.pyplot as plt
 
-device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
+
 device = torch.device("cpu")
 # Hyperparameters
 N_EPISODES = 200
@@ -26,27 +27,33 @@ WEIGHT_DECAY = 0.005
 TAU = 1e-3
 LR = 1e-4
 
-env = gym.make("HumanoidStandup-v5", render_mode="rgb_array", max_episode_steps=200)
+env = gym.make("HalfCheetah-v5", render_mode="rgb_array", max_episode_steps=200)
 
 n_actions = env.action_space.shape[0] 
 state, _ = env.reset()
+
 n_obs = len(state)
 
+def d(x: torch.tensor):
+    return torch.relu(x-1)
+
+d0 = 50
+
 # Training loop
-agent = ddpg.DDPG(n_obs, n_actions, BATCH_SIZE, GAMMA, TAU, LR, WEIGHT_DECAY)
-criterion = nn.MSELoss()
-memory = ddpg.ReplayMemory(MEMORY_SIZE)
+agent = sddpg.SDDPG(n_obs, n_actions, BATCH_SIZE, GAMMA, TAU, LR, WEIGHT_DECAY,d, d0, state)
+criterion_critic = nn.MSELoss()
+criterion_constraint = nn.MSELoss()
+memory = sddpg.ReplayMemory(MEMORY_SIZE)
 losses = []
 
 progress_bar = tqdm(total=N_EPISODES, position=0, leave=True)
 for i_episode in range(N_EPISODES):
     progress_bar.update(1)
-    episode_reward = ddpg.train(i_episode, EPS_START, EPS_END, EPS_DECAY, criterion, agent, memory, env)
+    episode_reward = sddpg.train(i_episode, EPS_START, EPS_END, EPS_DECAY, criterion_critic, criterion_constraint, agent, memory, env)
     losses.append(episode_reward)
-    if i_episode>0:
+    if i_episode>5:
         progress_bar.set_postfix({
-                'last reward': round(episode_reward, 5),
-                'best reward': round(max(losses), 5),
+                'average last 5 rewards': round(np.mean(losses[-6:-1]), 5),
                 })
     
 del progress_bar
