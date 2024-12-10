@@ -178,7 +178,8 @@ class SDDPG:
         action = self.select_action(x0).unsqueeze(0)
 
         self.const_critic_local.eval()
-        self.aux = (1-self.gamma)*(self.d0-self.const_critic_local(x0, action)).detach()
+        with torch.no_grad():
+            self.aux = (1-self.gamma)*(self.d0-self.const_critic_local(x0, action))
         self.const_critic_local.train()
 
     def soft_update(self, local_model, target_model):

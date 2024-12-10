@@ -2,9 +2,7 @@ import sddpg
 import gymnasium as gym
 from gymnasium.wrappers import RecordEpisodeStatistics, RecordVideo
 
-import math
 import os
-import random
 from tqdm import tqdm
 import numpy as np
 
@@ -15,8 +13,10 @@ import matplotlib.pyplot as plt
 
 
 device = torch.device("cpu")
+torch.set_num_threads(12)
+torch.set_num_interop_threads(12)
 # Hyperparameters
-N_EPISODES = 200
+N_EPISODES = 250
 BATCH_SIZE = 128
 MEMORY_SIZE = 1000000
 GAMMA = 0.99
@@ -27,7 +27,7 @@ WEIGHT_DECAY = 0.005
 TAU = 1e-3
 LR = 1e-4
 
-env = gym.make("HalfCheetah-v5", render_mode="rgb_array", max_episode_steps=200)
+env = gym.make("HalfCheetah-v5", render_mode="rgb_array", max_episode_steps=100)
 
 n_actions = env.action_space.shape[0] 
 state, _ = env.reset()
@@ -35,15 +35,13 @@ state, _ = env.reset()
 n_obs = len(state)
 
 def d(x: torch.tensor):
-    v = x[:,8:10]
-    v = torch.norm(v,dim=1).unsqueeze(-1)
-
-    return torch.relu(v-1)
+    return (torch.linalg.vector_norm(x[:,8:10],dim=1)>=1).unsqueeze(-1)
 
 d0 = 50
 
 # Training loop
 agent = sddpg.SDDPG(n_obs, n_actions, BATCH_SIZE, GAMMA, TAU, LR, WEIGHT_DECAY,d, d0, state)
+
 criterion_critic = nn.MSELoss()
 criterion_constraint = nn.MSELoss()
 memory = sddpg.ReplayMemory(MEMORY_SIZE)
@@ -62,10 +60,15 @@ for i_episode in range(N_EPISODES):
 del progress_bar
 
 print("Training completed.")
-plt.plot(losses)
-plt.xlabel("Episodes")
-plt.ylabel("Training Reward")
-plt.show()
+fig = plt.figure()
+ax  = fig.subplots(1)
+ax.plot(losses)
+ax.set_xlabel("Episode")
+ax.set_ylabel("Loss")
+fig.suptitle("Training loss over time")
+if os.path.isdir('figures') is False:
+            os.mkdir('figures')
+fig.savefig(f"figures/last_fig_long.png")
 
 print("Saving model...")
 agent.save("humanoid")
