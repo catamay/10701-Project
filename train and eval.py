@@ -47,17 +47,13 @@ criterion_constraint = nn.MSELoss()
 memory = sddpg.ReplayMemory(MEMORY_SIZE)
 losses = []
 
-progress_bar = tqdm(total=N_EPISODES, position=0, leave=True)
-for i_episode in range(N_EPISODES):
-    progress_bar.update(1)
+for i_episode in (pbar := tqdm(range(N_EPISODES))):
     episode_reward = sddpg.train(i_episode, EPS_START, EPS_END, EPS_DECAY, criterion_critic, criterion_constraint, agent, memory, env)
     losses.append(episode_reward)
     if i_episode>5:
-        progress_bar.set_postfix({
+        pbar.set_postfix({
                 'average last 5 rewards': round(np.mean(losses[-6:-1]), 5),
                 })
-    
-del progress_bar
 
 print("Training completed.")
 fig = plt.figure()
