@@ -149,16 +149,15 @@ class SDDPG:
         const_critic_loss = criterion_constraint(safe_q_values, target_safe_q_values)
         critic_loss = criterion_critic(q_values, target_q_values)
 
-
-        const_critic_loss.backward()
-        critic_loss.backward()
+        loss = critic_loss **2 + const_critic_loss **2
+        loss.backward()
 
 
         self.critic_optim.step()
         self.const_critic_optim.step()
 
 
-        actor_loss = -self.const_critic_local(state_batch, self.actor_local(state_batch)).mean()
+        actor_loss = self.const_critic_local(state_batch, self.actor_local(state_batch)).mean()-self.critic_local(state_batch, self.actor_local(state_batch)).mean()
         actor_loss.backward()
         self.actor_optim.step()
 
@@ -177,7 +176,8 @@ class SDDPG:
         action = self.select_action(x0).unsqueeze(0)
 
         self.const_critic_local.eval()
-        self.aux = (1-self.gamma)*(self.d0-self.const_critic_local(x0, action))
+        with torch.no_grad():
+            self.aux = (1-self.gamma)*(self.d0-self.const_critic_local(x0, action))
         self.const_critic_local.train()
 
     def soft_update(self, local_model, target_model):

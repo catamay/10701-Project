@@ -27,7 +27,7 @@ WEIGHT_DECAY = 0.005
 TAU = 1e-3
 LR = 1e-4
 
-env = gym.make("HalfCheetah-v5", render_mode="rgb_array", max_episode_steps=200)
+env = gym.make("HalfCheetah-v5", render_mode="rgb_array", max_episode_steps=100)
 
 n_actions = env.action_space.shape[0] 
 state, _ = env.reset()
@@ -35,22 +35,16 @@ state, _ = env.reset()
 n_obs = len(state)
 
 def d(x: torch.tensor):
-    return torch.relu(x-1)
+    return (torch.linalg.vector_norm(x[:,8:10],dim=1)>=1).unsqueeze(-1)
 
 d0 = 50
 
 # Training loop
-<<<<<<< HEAD
-agent = ddpg.DDPG(n_obs, n_actions, BATCH_SIZE, GAMMA, TAU, LR, WEIGHT_DECAY)
-agent.load("./models/humanoid.pt")
-criterion = nn.MSELoss()
-memory = ddpg.ReplayMemory(MEMORY_SIZE)
-=======
 agent = sddpg.SDDPG(n_obs, n_actions, BATCH_SIZE, GAMMA, TAU, LR, WEIGHT_DECAY,d, d0, state)
+
 criterion_critic = nn.MSELoss()
 criterion_constraint = nn.MSELoss()
 memory = sddpg.ReplayMemory(MEMORY_SIZE)
->>>>>>> fe02869132e717b699336375b274f2fc937e8929
 losses = []
 
 progress_bar = tqdm(total=N_EPISODES, position=0, leave=True)
