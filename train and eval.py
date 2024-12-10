@@ -35,7 +35,10 @@ state, _ = env.reset()
 n_obs = len(state)
 
 def d(x: torch.tensor):
-    return torch.relu(x-1)
+    v = x[:,8:10]
+    v = torch.norm(v,dim=1).unsqueeze(-1)
+
+    return torch.relu(v-1)
 
 d0 = 50
 
@@ -78,7 +81,7 @@ for episode_num in range(num_eval_episodes):
 
     while not done:
         state = torch.tensor(obs, dtype=torch.float32, device=device).unsqueeze(0)
-        action = agent.select_action(state).cpu().numpy()
+        action = agent.select_action(state).numpy(force=True)
 
         obs, reward, terminated, truncated, info = env.step(action)
         done = terminated or truncated

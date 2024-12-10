@@ -111,7 +111,7 @@ class SDDPG:
         
         lambda_star = (torch.dot(gL, action-self.baseline(obs)) - self.aux)/torch.norm(gL,p=2)**2
 
-        safe_action = action + lambda_star*gL
+        safe_action = (action + lambda_star*gL).detach()
 
 
         self.actor_local.train()
@@ -138,32 +138,33 @@ class SDDPG:
 
 
         next_actions_batch = self.actor_target(next_state_batch)
+
         target_safe_q_values = self.d(state_batch) + self.aux + self.gamma * self.const_critic_target(next_state_batch, next_actions_batch)
         target_q_values = reward_batch.unsqueeze(1) + self.gamma * self.critic_target(next_state_batch, next_actions_batch)
 
         safe_q_values = self.const_critic_local(state_batch, action_batch)
         q_values = self.critic_local(state_batch, action_batch)
 
-
-
-        const_critic_loss = criterion_constraint(safe_q_values, target_safe_q_values)
         critic_loss = criterion_critic(q_values, target_q_values)
+        const_critic_loss = criterion_critic(safe_q_values, target_safe_q_values)
 
+        loss = critic_loss**2 + const_critic_loss**2
 
-        const_critic_loss.backward()
-        critic_loss.backward()
+        loss.backward()
 
 
         self.critic_optim.step()
         self.const_critic_optim.step()
 
 
-        actor_loss = -self.const_critic_local(state_batch, self.actor_local(state_batch)).mean()
+        nn.utils.clip_grad_norm_(self.const_critic_local.parameters(), 1)
+        nn.utils.clip_grad_norm_(self.critic_local.parameters(), 1)
+
+        actor_loss = -self.critic_local(state_batch, self.actor_local(state_batch)).mean()
         actor_loss.backward()
         self.actor_optim.step()
 
-        nn.utils.clip_grad_norm_(self.const_critic_local.parameters(), 1)
-        nn.utils.clip_grad_norm_(self.critic_local.parameters(), 1)
+
         # Perform soft updates of target networks
         self.soft_update(self.critic_local, self.critic_target)
         self.soft_update(self.const_critic_local, self.const_critic_target)
@@ -177,7 +178,7 @@ class SDDPG:
         action = self.select_action(x0).unsqueeze(0)
 
         self.const_critic_local.eval()
-        self.aux = (1-self.gamma)*(self.d0-self.const_critic_local(x0, action))
+        self.aux = (1-self.gamma)*(self.d0-self.const_critic_local(x0, action)).detach()
         self.const_critic_local.train()
 
     def soft_update(self, local_model, target_model):
