@@ -2,9 +2,7 @@ import ddpg
 import gymnasium as gym
 from gymnasium.wrappers import RecordEpisodeStatistics, RecordVideo
 
-import math
 import os
-import random
 from tqdm import tqdm
 
 import torch
@@ -14,8 +12,10 @@ import matplotlib.pyplot as plt
 
 device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
 device = torch.device("cpu")
+torch.set_num_threads(12)
+torch.set_num_interop_threads(12)
 # Hyperparameters
-N_EPISODES = 200
+N_EPISODES = 250
 BATCH_SIZE = 128
 MEMORY_SIZE = 1000000
 GAMMA = 0.99
@@ -34,6 +34,7 @@ n_obs = len(state)
 
 # Training loop
 agent = ddpg.DDPG(n_obs, n_actions, BATCH_SIZE, GAMMA, TAU, LR, WEIGHT_DECAY)
+agent.load("./models/humanoid.pt")
 criterion = nn.MSELoss()
 memory = ddpg.ReplayMemory(MEMORY_SIZE)
 losses = []
@@ -52,10 +53,15 @@ for i_episode in range(N_EPISODES):
 del progress_bar
 
 print("Training completed.")
-plt.plot(losses)
-plt.xlabel("Episodes")
-plt.ylabel("Training Reward")
-plt.show()
+fig = plt.figure()
+ax  = fig.subplots(1)
+ax.plot(losses)
+ax.set_xlabel("Episode")
+ax.set_ylabel("Loss")
+fig.suptitle("Training loss over time")
+if os.path.isdir('figures') is False:
+            os.mkdir('figures')
+fig.savefig(f"figures/last_fig_long.png")
 
 print("Saving model...")
 agent.save("humanoid")
