@@ -1,6 +1,7 @@
 torch
 swig
 matplotlib
+ray
 gymnasium
 gymnasium[mujoco]
 gymnasium[other]

@@ -75,28 +75,34 @@ class SafetyLayer(nn.Module):
             action_prev = self.actor(obs)
         else:
             action_prev = torch.zeros_like(action)
-        
-        action_prev.requires_grad_()
-        Q_val = self.critic(obs, action_prev)
-        Q_val = Q_val.requires_grad_()
+        actions_prev = []
+        gL = []
+        for i in range(obs.shape[0]):
+            action_prev = action[i,:].unsqueeze(0)
+            action_prev.requires_grad_()
+            Q_val = self.critic(obs[i,:].unsqueeze(0), action_prev)
+            Q_val = Q_val.requires_grad_()
 
-        Q_val.backward(inputs=action_prev)
-        gL = action_prev.grad.detach().squeeze(0)
-        action = action.squeeze(0)
-        action_prev = action_prev.squeeze(0)
+            Q_val.backward(inputs=action_prev)
+            gL.append(action_prev.grad.detach())
+            actions_prev.append(action_prev)
 
-        lambda_star = torch.relu((torch.dot(gL, action - action_prev) - self.aux)/torch.linalg.vector_norm(gL)**2)
-        grad_update = lambda_star * gL
+        actions_prev = torch.cat(actions_prev)
+        gL = torch.cat(gL)
+
+        # lambda_star = torch.relu((torch.dot(gL, action - actions_prev) - self.aux)/torch.linalg.vector_norm(gL)**2)
+        # grad_update = lambda_star * gL
 
         return (action - grad_update).detach()
 
 # Safe Deep Deterministic Policy Gradient
 class SDDPG:
-    def __init__(self, n_obs, n_actions, batch_size, gamma, tau, lr, weight_decay, d, d0, x0, device=torch.device("cpu"), n_hidden=300):
+    def __init__(self, n_obs, n_actions, batch_size, traj_length, gamma, tau, lr, weight_decay, d, d0, x0, device=torch.device("cpu"), n_hidden=300):
         self.n_obs = n_obs
         self.n_actions = n_actions
         self.n_hidden = n_hidden
         self.batch_size = batch_size
+        self.traj_length = traj_length
         self.tau = tau
         self.gamma = gamma
 
@@ -149,8 +155,8 @@ class SDDPG:
 
     def update(self, memory, criterion_critic):
         if len(memory) < self.batch_size:
-            return 0 # no loss until we can make a batch
-
+            return 0
+        
         self.safety_layer.updateQA(copy.deepcopy(self.const_critic_local), copy.deepcopy(self.actor_local))
 
         self.critic_local.train()
