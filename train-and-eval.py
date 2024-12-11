@@ -26,13 +26,14 @@ EPS_DECAY = 100
 WEIGHT_DECAY = 0.005
 TAU = 1e-3
 LR = 1e-4
+NUM_TRAJ = 5
 
 env = gym.make("HalfCheetah-v5", render_mode="rgb_array", max_episode_steps=100)
 
 n_actions = env.action_space.shape[0] 
-state, _ = env.reset()
+x0, _ = env.reset()
 
-n_obs = len(state)
+n_obs = len(x0)
 
 def d(x: torch.tensor):
     return (torch.linalg.vector_norm(x[:,8:10],dim=1)>=1).unsqueeze(-1)
@@ -40,7 +41,7 @@ def d(x: torch.tensor):
 d0 = 50
 
 # Training loop
-agent = sddpg.SDDPG(n_obs, n_actions, BATCH_SIZE, GAMMA, TAU, LR, WEIGHT_DECAY,d, d0, state)
+agent = sddpg.SDDPG(n_obs, n_actions, BATCH_SIZE, GAMMA, TAU, LR, WEIGHT_DECAY,d, d0, x0, NUM_TRAJ)
 
 memory = sddpg.ReplayMemory(MEMORY_SIZE)
 losses = []
@@ -49,7 +50,8 @@ for i_episode in (pbar := tqdm(range(N_EPISODES))):
     print(f"Current Episode: {i_episode}")
     if i_episode == 0:
         last_policy = agent
-    last_policy, actor_losses = sddpg.train(i_episode, EPS_START, EPS_END, EPS_DECAY, last_policy, env, 5, BATCH_SIZE)
+    last_policy, actor_losses = sddpg.train(i_episode, EPS_START, EPS_END, EPS_DECAY, last_policy, env, NUM_TRAJ, BATCH_SIZE)
+    # need to consider only until done = True
     avg_losses = np.mean([np.mean(losses) for losses in actor_losses])
     print(f"Average Actor Loss: {avg_losses}")
     losses.append(avg_losses)

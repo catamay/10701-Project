@@ -54,7 +54,7 @@ class Critic(nn.Module):
 
 # Safe Deep Deterministic Policy Gradient
 class SDDPG:
-    def __init__(self, n_obs, n_actions, batch_size, gamma, tau, lr, weight_decay, d, d0, x0, device=torch.device("cpu"), n_hidden=300):
+    def __init__(self, n_obs, n_actions, batch_size, gamma, tau, lr, weight_decay, d, d0, x0, num_traj, device=torch.device("cpu"), n_hidden=300):
         self.n_obs = n_obs
         self.n_actions = n_actions
         self.n_hidden = n_hidden
@@ -64,9 +64,13 @@ class SDDPG:
 
         self.d = d
         self.d0 = d0
-        self.aux = 0
         self.x0 = x0
-        self.baseline_action = torch.zeros(n_actions)
+
+        # Initialize all memoizers as tensors of 0's
+        self.aux = torch.zeros(num_traj, batch_size)
+        self.baseline_action =  torch.zeros((num_traj, batch_size,n_actions))
+        self.last_gL = torch.zeros((num_traj, batch_size,n_actions))
+        
 
         self.actor_local = nn.Sequential(
                 nn.Linear(n_obs, n_hidden),
@@ -98,21 +102,51 @@ class SDDPG:
         self.const_critic_target = Critic(n_obs, n_hidden, n_actions).to(device)
         self.const_critic_optim = optim.AdamW(self.const_critic_local.parameters(), lr=lr, weight_decay=weight_decay)
 
-    def select_action(self, state_obs):
+    def select_action(self, state_obs, trajectory, timestep):
         self.actor_local.eval()
         self.const_critic_local.eval()
         self.actor_local.zero_grad()
 
-        action = self.actor_local(state_obs)
+        baseline_action = self.baseline_action[trajectory][timestep]
+        baseline_gradient = self.last_gL[trajectory][timestep]
+        auxillary_constant = self.aux[trajectory][timestep]
+        baseline_norm = torch.norm(baseline_gradient,p=2)**2
 
-        v = self.const_critic_local(state_obs, action)
+        if (baseline_norm == 0):
+            baseline_norm = 1
 
-        gL = torch.autograd.grad(outputs=v, inputs=action)[0].squeeze(0).detach()
-        action = action.squeeze(0).detach()
-        lambda_star = (torch.dot(gL, action-self.baseline_action) - self.aux)/torch.norm(gL,p=2)**2
-        lambda_star = torch.clamp(lambda_star, min=0)
+        with torch.enable_grad():
+            action = self.actor_local(state_obs)
+            action.requires_grad_(True)
+            action_baseline_diff = (action-baseline_action).squeeze(0)
 
-        safe_action = (action - lambda_star*gL).detach()
+            v = self.const_critic_local(state_obs, action)
+            v.requires_grad_(True)  # Explicitly require gradients for value
+
+            # Compute gradient with respect to action
+            next_gL = torch.autograd.grad(
+                outputs=v, 
+                inputs=action, 
+                create_graph=True,  # Allow higher-order gradients
+                retain_graph=True   # Retain the computational graph
+            )[0].squeeze(0)
+
+            lambda_star = (torch.dot(baseline_gradient, action_baseline_diff) - auxillary_constant)/baseline_norm
+            lambda_star = torch.clamp(lambda_star, min=0)
+
+            safe_action = (action - lambda_star*baseline_gradient).detach()
+            if torch.isnan(safe_action).any():
+                print(f"trajectory: {trajectory}\ntimestep:{timestep}")
+                print(f"safe_action: {safe_action}")
+                print(f"lambda_star: {lambda_star}")
+                print(f"action_baseline_diff: {action_baseline_diff}")
+                print(f"baseline_gradient: {baseline_gradient}")
+                print(f"auxillary_constant: {auxillary_constant}")
+                print(f"baseline_norm: {baseline_norm}\n\n\n")
+                exit(0)
+
+        # calculate new baseline gradient eagerly for next iteration
+        self.last_gL[trajectory][timestep] = next_gL.detach()
 
 
         self.actor_local.train()
@@ -120,7 +154,7 @@ class SDDPG:
         return safe_action.squeeze(0)
     
     def update_critics(self, trajectories):
-        for t in trajectories:
+        for traj_num, t in enumerate(trajectories):
             states = t[0]
             actions = t[1]
             rewards = t[2] 
@@ -128,7 +162,7 @@ class SDDPG:
 
             next_actions = self.actor_target(next_states)
 
-            target_safe_q_values = self.d(states) + self.aux + self.gamma * self.const_critic_target(next_states, next_actions)
+            target_safe_q_values = self.d(states) + self.aux[traj_num] + self.gamma * self.const_critic_target(next_states, next_actions)
             target_q_values = rewards + self.gamma * self.critic_target(next_states, next_actions)
 
             safe_q_values = self.const_critic_local(states, actions)
@@ -137,6 +171,7 @@ class SDDPG:
             critic_loss = self.critic_local.loss_fn(q_values, target_q_values)
             const_critic_loss = self.const_critic_local.loss_fn(safe_q_values, target_safe_q_values)
 
+            # need to consider only until end of trajectory somehow for loss + reward
             loss = critic_loss + const_critic_loss
     
             loss.backward()
@@ -160,7 +195,6 @@ class SDDPG:
         predicted_actions_per_trajectory = []
         for t in trajectories:
             states = t[0]
-
             # Compute actor loss
             self.actor_optim.zero_grad()
             predicted_actions = self.actor_local(states)
@@ -182,15 +216,16 @@ class SDDPG:
         return actor_losses, predicted_actions_per_trajectory
 
 
-    def set_auxillary(self, x0):
+    def set_auxillary(self, x0, N, T):
         self.x0 = x0
+        for traj_num in range(N):
+            for timestep in range(T):
+                raw_actions = self.select_action(x0, traj_num, timestep).unsqueeze(0)
 
-        raw_actions = self.select_action(x0).unsqueeze(0)
-
-        self.const_critic_local.eval()
-        with torch.no_grad():
-            self.aux = (1-self.gamma)*(self.d0-self.const_critic_local(x0, raw_actions))
-        self.const_critic_local.train()
+                self.const_critic_local.eval()
+                with torch.no_grad():
+                    self.aux[traj_num][timestep] = ((1-self.gamma)*(self.d0-self.const_critic_local(x0, raw_actions)))
+                self.const_critic_local.train()
 
     def soft_update(self, local_model, target_model):
         for target_param, local_param in zip(target_model.parameters(), local_model.parameters()):
@@ -216,7 +251,7 @@ def generate_trajectories(policy_agent, env, N, T, episode, eps_start, eps_end, 
     seed = torch.randint(1,1000, (1,1))
     env.action_space.seed(seed.item())
 
-    for _ in range(N):
+    for traj_num in range(N):
         states = []
         actions = []
         rewards = []
@@ -226,13 +261,14 @@ def generate_trajectories(policy_agent, env, N, T, episode, eps_start, eps_end, 
         state, _ = env.reset()
         state = torch.tensor(state, dtype=torch.float32, device=device).unsqueeze(0)
 
-        for _ in range(T):
+        for timestep in range(T):
             eps = eps_end + (eps_start - eps_end) * math.exp(-1. * episode / eps_decay)
 
             if random.random()<eps:
                 action = torch.Tensor(env.action_space.sample())
             else:
-                action = policy_agent.select_action(state)
+                action = policy_agent.select_action(state, traj_num, timestep)
+
             
             observation, reward, terminated, truncated, _ = env.step(action.numpy(force=True))
             reward = torch.tensor([reward], device=device, dtype=torch.float32)
@@ -243,20 +279,38 @@ def generate_trajectories(policy_agent, env, N, T, episode, eps_start, eps_end, 
             states.append(state)
             actions.append(action)
             rewards.append(reward)
-            next_states.append(next_state if next_state is not None else torch.zeros_like(state))
+            next_states.append(next_state if next_state is not None else state)
             dones.append(torch.tensor([done], dtype=torch.float32, device=device))
 
             state = next_state
 
             if done:
+                # Pad trajectory tensors to ensure consistent length
+                # Use the last valid state for padding
+                last_valid_state = states[-1] if states else torch.zeros_like(state)
+                last_valid_action = actions[-1] if actions else torch.zeros_like(action)
+                last_valid_reward = rewards[-1] if rewards else torch.zeros_like(reward)
+                while len(states) < T:
+                    states.append(last_valid_state)
+                    actions.append(last_valid_action)
+                    rewards.append(last_valid_reward)
+                    next_states.append(last_valid_state)
+                    dones.append(torch.tensor([True], dtype=torch.float32, device=device))
+                    
+                    timestep += 1
                 break
 
+        # print(f"States: {states}")
+        # print(f"Actions: {actions}")
+        # print(f"rewards: {rewards}")
+        # print(f"dones: {dones}")
         # Convert collected data into tensors
         states = torch.cat(states, dim=0)
         actions = torch.stack(actions, dim=0)
         rewards = torch.stack(rewards, dim=0)
         next_states = torch.cat(next_states, dim=0)
         dones = torch.stack(dones, dim=0)
+
         trajectories.append([states, actions, rewards, next_states, dones])
     
     return trajectories
@@ -267,7 +321,7 @@ def train(episode, eps_start, eps_end, eps_decay, last_policy, env, N, T, device
     x0 = torch.zeros_like(state)
     x0 = x0.copy_(state)
     pi_theta_k = last_policy
-    pi_theta_k.set_auxillary(x0)
+    pi_theta_k.set_auxillary(x0, N, T)
 
     # Step 0: generate N trajectories of length T using the previous policy
     trajectories = generate_trajectories(pi_theta_k, env, N, T, episode, eps_start, eps_end, eps_decay, device)
@@ -276,8 +330,8 @@ def train(episode, eps_start, eps_end, eps_decay, last_policy, env, N, T, device
     pi_theta_k.update_critics(trajectories)
 
     # Step 2: Update Policy Parameters
-    actor_losses, prediced_actions = pi_theta_k.update_agent(trajectories)
+    actor_losses, predicted_actions_per_traj = pi_theta_k.update_agent(trajectories)
 
     # Step 3: Update baseline
-    pi_theta_k.baseline = prediced_actions
+    pi_theta_k.baseline_action = predicted_actions_per_traj
     return pi_theta_k, actor_losses
