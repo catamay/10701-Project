@@ -42,18 +42,17 @@ d0 = 50
 # Training loop
 agent = sddpg.SDDPG(n_obs, n_actions, BATCH_SIZE, GAMMA, TAU, LR, WEIGHT_DECAY,d, d0, state)
 
-criterion_critic = nn.MSELoss()
-criterion_constraint = nn.MSELoss()
 memory = sddpg.ReplayMemory(MEMORY_SIZE)
 losses = []
 
 for i_episode in (pbar := tqdm(range(N_EPISODES))):
-    episode_reward = sddpg.train(i_episode, EPS_START, EPS_END, EPS_DECAY, criterion_critic, criterion_constraint, agent, memory, env)
-    losses.append(episode_reward)
-    if i_episode>5:
-        pbar.set_postfix({
-                'average last 5 rewards': round(np.mean(losses[-6:-1]), 5),
-                })
+    print(f"Current Episode: {i_episode}")
+    if i_episode == 0:
+        last_policy = agent
+    last_policy, actor_losses = sddpg.train(i_episode, EPS_START, EPS_END, EPS_DECAY, last_policy, env, 5, BATCH_SIZE)
+    avg_losses = np.mean([np.mean(losses) for losses in actor_losses])
+    print(f"Average Actor Loss: {avg_losses}")
+    losses.append(avg_losses)
 
 print("Training completed.")
 fig = plt.figure()

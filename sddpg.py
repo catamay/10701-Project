@@ -35,7 +35,7 @@ Transition = namedtuple('Transition', ('state', 'action', 'next_state', 'reward'
 class Critic(nn.Module):
     def __init__(self, n_obs, n_hidden, n_actions):
         super().__init__()
-
+        self.loss_fn = nn.MSELoss()
         self.input_layer = nn.Linear(n_obs, n_hidden)
         self.batch_norm = nn.BatchNorm1d(n_hidden)
         self.hidden_layer = nn.Linear(n_hidden + n_actions, n_hidden)
@@ -66,7 +66,7 @@ class SDDPG:
         self.d0 = d0
         self.aux = 0
         self.x0 = x0
-        self.baseline = lambda x: torch.zeros(n_actions)
+        self.baseline_action = torch.zeros(n_actions)
 
         self.actor_local = nn.Sequential(
                 nn.Linear(n_obs, n_hidden),
@@ -98,88 +98,98 @@ class SDDPG:
         self.const_critic_target = Critic(n_obs, n_hidden, n_actions).to(device)
         self.const_critic_optim = optim.AdamW(self.const_critic_local.parameters(), lr=lr, weight_decay=weight_decay)
 
-    def select_action(self, obs):
+    def select_action(self, state_obs):
         self.actor_local.eval()
         self.const_critic_local.eval()
         self.actor_local.zero_grad()
 
-        action = self.actor_local(obs)
+        action = self.actor_local(state_obs)
 
-        v = self.const_critic_local(obs, action)
+        v = self.const_critic_local(state_obs, action)
+
         gL = torch.autograd.grad(outputs=v, inputs=action)[0].squeeze(0).detach()
         action = action.squeeze(0).detach()
-        
-        lambda_star = (torch.dot(gL, action-self.baseline(obs)) - self.aux)/torch.norm(gL,p=2)**2
+        lambda_star = (torch.dot(gL, action-self.baseline_action) - self.aux)/torch.norm(gL,p=2)**2
+        lambda_star = torch.clamp(lambda_star, min=0)
 
-        safe_action = (action + lambda_star*gL).detach()
+        safe_action = (action - lambda_star*gL).detach()
 
 
         self.actor_local.train()
         self.const_critic_local.train()
         return safe_action.squeeze(0)
-            
+    
+    def update_critics(self, trajectories):
+        for t in trajectories:
+            states = t[0]
+            actions = t[1]
+            rewards = t[2] 
+            next_states = t[3] 
 
-    def update(self, memory, criterion_critic, criterion_constraint):
-        if len(memory) < self.batch_size:
-            return 0 # no loss until we can make a batch
-        
-        self.critic_optim.zero_grad()
-        self.const_critic_optim.zero_grad()
-        self.actor_optim.zero_grad()
+            next_actions = self.actor_target(next_states)
 
-        transitions = memory.sample(self.batch_size)
-        batch = Transition(*zip(*transitions))
+            target_safe_q_values = self.d(states) + self.aux + self.gamma * self.const_critic_target(next_states, next_actions)
+            target_q_values = rewards + self.gamma * self.critic_target(next_states, next_actions)
 
-        # Batch a sample of the memory
-        state_batch = torch.cat(batch.state)
-        action_batch = torch.cat(batch.action)
-        next_state_batch = torch.cat(batch.next_state)
-        reward_batch = torch.cat(batch.reward)
+            safe_q_values = self.const_critic_local(states, actions)
+            q_values = self.critic_local(states, actions)
 
+            critic_loss = self.critic_local.loss_fn(q_values, target_q_values)
+            const_critic_loss = self.const_critic_local.loss_fn(safe_q_values, target_safe_q_values)
 
-        next_actions_batch = self.actor_target(next_state_batch)
-
-        target_safe_q_values = self.d(state_batch) + self.aux + self.gamma * self.const_critic_target(next_state_batch, next_actions_batch)
-        target_q_values = reward_batch.unsqueeze(1) + self.gamma * self.critic_target(next_state_batch, next_actions_batch)
-
-        safe_q_values = self.const_critic_local(state_batch, action_batch)
-        q_values = self.critic_local(state_batch, action_batch)
-
-        critic_loss = criterion_critic(q_values, target_q_values)
-        const_critic_loss = criterion_critic(safe_q_values, target_safe_q_values)
-
-        loss = critic_loss**2 + const_critic_loss**2
-
-        loss.backward()
+            loss = critic_loss + const_critic_loss
+    
+            loss.backward()
 
 
-        self.critic_optim.step()
-        self.const_critic_optim.step()
+            self.critic_optim.step()
+            self.const_critic_optim.step()
 
 
-        nn.utils.clip_grad_norm_(self.const_critic_local.parameters(), 1)
-        nn.utils.clip_grad_norm_(self.critic_local.parameters(), 1)
+            nn.utils.clip_grad_norm_(self.const_critic_local.parameters(), 1)
+            nn.utils.clip_grad_norm_(self.critic_local.parameters(), 1)
 
-        actor_loss = -self.critic_local(state_batch, self.actor_local(state_batch)).mean()
-        actor_loss.backward()
-        self.actor_optim.step()
+            self.soft_update(self.critic_local, self.critic_target)
+            self.soft_update(self.const_critic_local, self.const_critic_target)
 
 
-        # Perform soft updates of target networks
-        self.soft_update(self.critic_local, self.critic_target)
-        self.soft_update(self.const_critic_local, self.const_critic_target)
-        self.soft_update(self.actor_local, self.actor_target)
-        
-        return actor_loss.item()
+        # return critic_loss, const_critic_loss
+
+    def update_agent(self, trajectories):
+        actor_losses = []
+        predicted_actions_per_trajectory = []
+        for t in trajectories:
+            states = t[0]
+
+            # Compute actor loss
+            self.actor_optim.zero_grad()
+            predicted_actions = self.actor_local(states)
+            actor_loss = -self.critic_local(states, predicted_actions).mean()
+            actor_loss.backward()
+
+            torch.nn.utils.clip_grad_norm_(self.actor_local.parameters(), max_norm=1.0)
+
+            # Perform optimization step
+            self.actor_optim.step()
+
+            # Perform soft updates of target networks
+            self.soft_update(self.actor_local, self.actor_target)
+            actor_losses.append(actor_loss.item())
+            predicted_actions_per_trajectory.append(predicted_actions)
+
+
+
+        return actor_losses, predicted_actions_per_trajectory
+
 
     def set_auxillary(self, x0):
         self.x0 = x0
 
-        action = self.select_action(x0).unsqueeze(0)
+        raw_actions = self.select_action(x0).unsqueeze(0)
 
         self.const_critic_local.eval()
         with torch.no_grad():
-            self.aux = (1-self.gamma)*(self.d0-self.const_critic_local(x0, action))
+            self.aux = (1-self.gamma)*(self.d0-self.const_critic_local(x0, raw_actions))
         self.const_critic_local.train()
 
     def soft_update(self, local_model, target_model):
@@ -201,36 +211,73 @@ class SDDPG:
         self.critic_local.load_state_dict(model_dict['critic_weights'])
         self.critic_target.load_state_dict(model_dict['critic_weights'])
 
-def train(episode, eps_start, eps_end, eps_decay, criterion_critic, criterion_constraint, agent, memory, env, device=torch.device("cpu")):
-    state, info = env.reset()
+def generate_trajectories(policy_agent, env, N, T, episode, eps_start, eps_end, eps_decay, device):
+    trajectories = []
+    seed = torch.randint(1,1000, (1,1))
+    env.action_space.seed(seed.item())
+
+    for _ in range(N):
+        states = []
+        actions = []
+        rewards = []
+        next_states = []
+        dones = []
+
+        state, _ = env.reset()
+        state = torch.tensor(state, dtype=torch.float32, device=device).unsqueeze(0)
+
+        for _ in range(T):
+            eps = eps_end + (eps_start - eps_end) * math.exp(-1. * episode / eps_decay)
+
+            if random.random()<eps:
+                action = torch.Tensor(env.action_space.sample())
+            else:
+                action = policy_agent.select_action(state)
+            
+            observation, reward, terminated, truncated, _ = env.step(action.numpy(force=True))
+            reward = torch.tensor([reward], device=device, dtype=torch.float32)
+            done = terminated or truncated
+
+            next_state = None if terminated else torch.tensor(observation, dtype=torch.float32, device=device).unsqueeze(0)
+
+            states.append(state)
+            actions.append(action)
+            rewards.append(reward)
+            next_states.append(next_state if next_state is not None else torch.zeros_like(state))
+            dones.append(torch.tensor([done], dtype=torch.float32, device=device))
+
+            state = next_state
+
+            if done:
+                break
+
+        # Convert collected data into tensors
+        states = torch.cat(states, dim=0)
+        actions = torch.stack(actions, dim=0)
+        rewards = torch.stack(rewards, dim=0)
+        next_states = torch.cat(next_states, dim=0)
+        dones = torch.stack(dones, dim=0)
+        trajectories.append([states, actions, rewards, next_states, dones])
+    
+    return trajectories
+
+def train(episode, eps_start, eps_end, eps_decay, last_policy, env, N, T, device=torch.device("cpu")):
+    state, _ = env.reset()
     state = torch.tensor(state, dtype=torch.float32, device=device).unsqueeze(0)
     x0 = torch.zeros_like(state)
-    x0 = state.copy_(x0)
-    agent.set_auxillary(x0)
-    episode_loss = 0
-    episode_reward = 0
-    while True:
-        # Select an action in the current state and
-        # add the resulting observations to the
-        # memory buffer
-        eps = eps_end + (eps_start - eps_end) * math.exp(-1. * episode / eps_decay)
+    x0 = x0.copy_(state)
+    pi_theta_k = last_policy
+    pi_theta_k.set_auxillary(x0)
 
+    # Step 0: generate N trajectories of length T using the previous policy
+    trajectories = generate_trajectories(pi_theta_k, env, N, T, episode, eps_start, eps_end, eps_decay, device)
 
-        if random.random()<eps:
-            action = torch.Tensor(env.action_space.sample())
-        else:
-            action = agent.select_action(state)
+    # Step 1: Using trajectories estimate critic and constraint critic
+    pi_theta_k.update_critics(trajectories)
 
-        observation, reward, terminated, truncated, _ = env.step(action.numpy(force=True))
-        episode_reward += reward
-        reward = torch.tensor([reward], device=device, dtype=torch.float32)
-        done = terminated or truncated
+    # Step 2: Update Policy Parameters
+    actor_losses, prediced_actions = pi_theta_k.update_agent(trajectories)
 
-        next_state = None if terminated else torch.tensor(observation, dtype=torch.float32, device=device).unsqueeze(0)
-        memory.push(state, action.unsqueeze(0), next_state, reward)
-
-        state = next_state
-        agent.update(memory, criterion_critic, criterion_constraint)
-
-        if done:
-            return episode_reward
+    # Step 3: Update baseline
+    pi_theta_k.baseline = prediced_actions
+    return pi_theta_k, actor_losses
