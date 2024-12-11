@@ -17,7 +17,8 @@ torch.set_num_threads(12)
 torch.set_num_interop_threads(12)
 # Hyperparameters
 N_EPISODES = 250
-BATCH_SIZE = 128
+# default timesteps in an episode
+BATCH_SIZE = 1000
 MEMORY_SIZE = 1000000
 GAMMA = 0.99
 EPS_START = 0.9
@@ -25,7 +26,7 @@ EPS_END = 0.05
 EPS_DECAY = 100
 WEIGHT_DECAY = 0.005
 TAU = 1e-3
-Q_LR = 1e-5
+Q_LR = 3e-5
 POLICY_LR = 3e-4
 NUM_TRAJ = 5
 
@@ -65,36 +66,63 @@ for i_episode in (pbar := tqdm(range(N_EPISODES))):
     constraint_violation_costs.append(avg_costs)
     constraint_violation_counts.append(avg_violations)
 
+# Plot 1: Training Loss Over Time
 print("Training completed.")
 fig = plt.figure()
-ax  = fig.subplots(1)
-ax.plot(losses)
+ax = fig.subplots(1)
+ax.plot(losses, label="Losses")
+
+# Add trendline
+x = np.arange(len(losses))
+trendline = np.poly1d(np.polyfit(x, losses, 1))  # Linear trendline (degree 1)
+ax.plot(x, trendline(x), linestyle="--", color="red", label="Trendline")
+
 ax.set_xlabel("Episode")
 ax.set_ylabel("Loss")
-fig.suptitle("Training loss over time")
-if os.path.isdir('figures') is False:
-            os.mkdir('figures')
-fig.savefig(f"figures/last_fig_long.png")
+fig.suptitle("Training Loss Over Time")
+ax.legend()
 
+if os.path.isdir('figures') is False:
+    os.mkdir('figures')
+fig.savefig("figures/last_fig_long.png")
+
+# Plot 2: Constraint Violations Over Time
 fig = plt.figure()
-ax  = fig.subplots(1)
-ax.plot(constraint_violation_counts)
+ax = fig.subplots(1)
+ax.plot(constraint_violation_counts, label="Violations")
+
+# Add trendline
+x = np.arange(len(constraint_violation_counts))
+trendline = np.poly1d(np.polyfit(x, constraint_violation_counts, 1))
+ax.plot(x, trendline(x), linestyle="--", color="red", label="Trendline")
+
 ax.set_xlabel("Episode")
 ax.set_ylabel("Number of Constraint Violations")
-fig.suptitle("Constraint Violations Over ime")
-if os.path.isdir('figures') is False:
-            os.mkdir('figures')
-fig.savefig(f"figures/constraints_violated.png")
+fig.suptitle("Constraint Violations Over Time")
+ax.legend()
 
+if os.path.isdir('figures') is False:
+    os.mkdir('figures')
+fig.savefig("figures/constraints_violated.png")
+
+# Plot 3: Cost of Constraint Violations Over Time
 fig = plt.figure()
-ax  = fig.subplots(1)
-ax.plot(constraint_violation_costs)
+ax = fig.subplots(1)
+ax.plot(constraint_violation_costs, label="Costs")
+
+# Add trendline
+x = np.arange(len(constraint_violation_costs))
+trendline = np.poly1d(np.polyfit(x, constraint_violation_costs, 1))
+ax.plot(x, trendline(x), linestyle="--", color="red", label="Trendline")
+
 ax.set_xlabel("Episode")
 ax.set_ylabel("Average Cost of Constraint Violation")
-fig.suptitle("Cost of Constraint Violations over Time")
+fig.suptitle("Cost of Constraint Violations Over Time")
+ax.legend()
+
 if os.path.isdir('figures') is False:
-            os.mkdir('figures')
-fig.savefig(f"figures/constraints_cost.png")
+    os.mkdir('figures')
+fig.savefig("figures/constraints_cost.png")
 
 
 print("Saving model...")

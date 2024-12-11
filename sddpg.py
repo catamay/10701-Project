@@ -162,7 +162,6 @@ class SDDPG:
             rewards = t[2] 
             next_states = t[3] 
             dones= t[4].squeeze()
-            constraints_cost = 0
             constraints_violations = 0
 
             next_actions = self.actor_target(next_states)
@@ -177,9 +176,9 @@ class SDDPG:
             safe_q_values = self.const_critic_local(states, actions)
             q_values = self.critic_local(states, actions)
 
-            constraints_cost += self.d(states).sum().item()
+            constraints_cost = self.d(states).sum().item()
             if constraints_cost > self.d0:
-                constraints_violations += 1
+                constraints_violations = math.floor(constraints_cost / self.d0)
 
             filtered_q_values = torch.cat([q_values[i] for i in range(len(q_values)) if not dones[i-1].item()], dim=0)
             filtered_safe_q_values = torch.cat([safe_q_values[i] for i in range(len(safe_q_values)) if not dones[i-1].item()], dim=0)
