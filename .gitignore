@@ -1,3 +1,5 @@
 /.venv/*
 /video_renders/*
+/models/*
+/__pycache__/*
 .git_credentials
