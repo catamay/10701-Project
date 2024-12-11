@@ -121,13 +121,13 @@ if train:
     memory = memory.ReplayMemory(MEMORY_SIZE)
     losses = []
 
-for i_episode in (pbar := tqdm(range(N_EPISODES))):
-    episode_reward = train(i_episode, EPS_START, EPS_END, EPS_DECAY, criterion_critic, agent, memory, env, device=device)
-    losses.append(episode_reward)
-    if i_episode>5:
-        pbar.set_postfix({
-                'average last 5 rewards': round(np.mean(losses[-6:-1]), 5),
-                })
+    for i_episode in (pbar := tqdm(range(N_EPISODES))):
+        episode_reward = train(i_episode, EPS_START, EPS_END, EPS_DECAY, criterion_critic, agent, memory, env, device=device)
+        losses.append(episode_reward)
+        if i_episode>5:
+            pbar.set_postfix({
+                    'average last 5 rewards': round(np.mean(losses[-6:-1]), 5),
+                    })
 
 
     print("Training completed.")
