@@ -54,7 +54,7 @@ class Critic(nn.Module):
 
 # Safe Deep Deterministic Policy Gradient
 class SDDPG:
-    def __init__(self, n_obs, n_actions, batch_size, gamma, tau, lr, weight_decay, d, d0, x0, num_traj, device=torch.device("cpu"), n_hidden=300):
+    def __init__(self, n_obs, n_actions, batch_size, gamma, tau, policy_lr, q_lr, weight_decay, d, d0, x0, num_traj, device=torch.device("cpu"), n_hidden=300):
         self.n_obs = n_obs
         self.n_actions = n_actions
         self.n_hidden = n_hidden
@@ -92,15 +92,15 @@ class SDDPG:
                 nn.Linear(n_hidden, n_actions),
                 nn.Tanh()
             ).to(device)
-        self.actor_optim = optim.AdamW(self.actor_local.parameters(), lr=lr, weight_decay=weight_decay)
+        self.actor_optim = optim.AdamW(self.actor_local.parameters(), lr=q_lr, weight_decay=weight_decay)
         
         self.critic_local = Critic(n_obs, n_hidden, n_actions).to(device)
         self.critic_target = Critic(n_obs, n_hidden, n_actions).to(device)
-        self.critic_optim = optim.AdamW(self.critic_local.parameters(), lr=lr, weight_decay=weight_decay)
+        self.critic_optim = optim.AdamW(self.critic_local.parameters(), lr=q_lr, weight_decay=weight_decay)
 
         self.const_critic_local = Critic(n_obs, n_hidden, n_actions).to(device)
         self.const_critic_target = Critic(n_obs, n_hidden, n_actions).to(device)
-        self.const_critic_optim = optim.AdamW(self.const_critic_local.parameters(), lr=lr, weight_decay=weight_decay)
+        self.const_critic_optim = optim.AdamW(self.const_critic_local.parameters(), lr=policy_lr, weight_decay=weight_decay)
 
     def select_action(self, state_obs, trajectory, timestep):
         self.actor_local.eval()
@@ -154,22 +154,39 @@ class SDDPG:
         return safe_action.squeeze(0)
     
     def update_critics(self, trajectories):
+        const_costs_over_traj = []
+        const_vio_traj = []
         for traj_num, t in enumerate(trajectories):
             states = t[0]
             actions = t[1]
             rewards = t[2] 
             next_states = t[3] 
+            dones= t[4].squeeze()
+            constraints_cost = 0
+            constraints_violations = 0
 
             next_actions = self.actor_target(next_states)
 
-            target_safe_q_values = self.d(states) + self.aux[traj_num] + self.gamma * self.const_critic_target(next_states, next_actions)
+            target_safe_q_values = (self.d(states).squeeze() + self.aux[traj_num] + self.gamma * self.const_critic_target(next_states, next_actions).squeeze()).unsqueeze(1)
             target_q_values = rewards + self.gamma * self.critic_target(next_states, next_actions)
 
+            # Filter so only states where trajectory is not finished are considered
+            # Bizarre off by one error
+            filtered_target_safe_q_values = torch.cat([target_safe_q_values[i] for i in range(len(target_safe_q_values)) if not dones[i-1].item()], dim=0)
+            filtered_target_q_values = torch.cat([target_q_values[i] for i in range(len(target_q_values)) if not dones[i-1].item()], dim=0)
             safe_q_values = self.const_critic_local(states, actions)
             q_values = self.critic_local(states, actions)
 
-            critic_loss = self.critic_local.loss_fn(q_values, target_q_values)
-            const_critic_loss = self.const_critic_local.loss_fn(safe_q_values, target_safe_q_values)
+            constraints_cost += self.d(states).sum().item()
+            if constraints_cost > self.d0:
+                constraints_violations += 1
+
+            filtered_q_values = torch.cat([q_values[i] for i in range(len(q_values)) if not dones[i-1].item()], dim=0)
+            filtered_safe_q_values = torch.cat([safe_q_values[i] for i in range(len(safe_q_values)) if not dones[i-1].item()], dim=0)
+
+            # print(f"filtered_q_values: {filtered_q_values.shape}\nfiltered_target_q_values: {filtered_target_q_values.shape}\n\nfiltered_safe_q_values: {filtered_safe_q_values.shape}\nfiltered_target_safe_q_values: {filtered_target_safe_q_values.shape}")
+            critic_loss = self.critic_local.loss_fn(filtered_q_values, filtered_target_q_values)
+            const_critic_loss = self.const_critic_local.loss_fn(filtered_safe_q_values, filtered_target_safe_q_values)
 
             # need to consider only until end of trajectory somehow for loss + reward
             loss = critic_loss + const_critic_loss
@@ -186,19 +203,23 @@ class SDDPG:
 
             self.soft_update(self.critic_local, self.critic_target)
             self.soft_update(self.const_critic_local, self.const_critic_target)
+            const_costs_over_traj.append(constraints_cost)
+            const_vio_traj.append(constraints_violations)
 
-
-        # return critic_loss, const_critic_loss
+        return const_costs_over_traj, const_vio_traj
 
     def update_agent(self, trajectories):
         actor_losses = []
         predicted_actions_per_trajectory = []
         for t in trajectories:
             states = t[0]
+            dones = t[4]
             # Compute actor loss
             self.actor_optim.zero_grad()
             predicted_actions = self.actor_local(states)
-            actor_loss = -self.critic_local(states, predicted_actions).mean()
+            critic_q_values = -self.critic_local(states, predicted_actions)
+            filtered_q_values = [critic_q_values[i] for i in range(len(critic_q_values)) if not dones[i-1]]
+            actor_loss = torch.cat(filtered_q_values, dim=0).mean()
             actor_loss.backward()
 
             torch.nn.utils.clip_grad_norm_(self.actor_local.parameters(), max_norm=1.0)
@@ -313,7 +334,7 @@ def generate_trajectories(policy_agent, env, N, T, episode, eps_start, eps_end, 
 
         trajectories.append([states, actions, rewards, next_states, dones])
     
-    return trajectories
+    return trajectories, seed
 
 def train(episode, eps_start, eps_end, eps_decay, last_policy, env, N, T, device=torch.device("cpu")):
     state, _ = env.reset()
@@ -324,14 +345,14 @@ def train(episode, eps_start, eps_end, eps_decay, last_policy, env, N, T, device
     pi_theta_k.set_auxillary(x0, N, T)
 
     # Step 0: generate N trajectories of length T using the previous policy
-    trajectories = generate_trajectories(pi_theta_k, env, N, T, episode, eps_start, eps_end, eps_decay, device)
+    trajectories, seed = generate_trajectories(pi_theta_k, env, N, T, episode, eps_start, eps_end, eps_decay, device)
 
     # Step 1: Using trajectories estimate critic and constraint critic
-    pi_theta_k.update_critics(trajectories)
+    constraint_cost, constraint_violations = pi_theta_k.update_critics(trajectories)
 
     # Step 2: Update Policy Parameters
     actor_losses, predicted_actions_per_traj = pi_theta_k.update_agent(trajectories)
 
     # Step 3: Update baseline
     pi_theta_k.baseline_action = predicted_actions_per_traj
-    return pi_theta_k, actor_losses
+    return pi_theta_k, actor_losses, seed, constraint_cost, constraint_violations
