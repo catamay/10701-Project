@@ -14,6 +14,6 @@ The instructions below tell you how to run any of the models described in the re
 
 To run Dynamics-Based Action Projection: $python3 'train and eval_dynamic.py'
 
-To run Lyapunov-Based Action Projection trained on entire trajectories: $python3 train-and-eval-trajectory-based.py
+To run Lyapunov-Based Action Projection trained on entire trajectories: $python3 train_and_eval_trajectory_based.py
 
 To run Lyapunov-Based Action Projection trained on individual trajectory steps: $python3 'train and eval.py'
