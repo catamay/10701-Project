@@ -10,9 +10,7 @@ This installs all requirements and creates a properly named virtual environment.
 This folder contains `.xml` files corresponding to certain environments used in the training/testing processes. The format of these environment files follows the [Mujoco XML reference](https://mujoco.readthedocs.io/en/latest/XMLreference.html).
 
 ## Running The Project
-You can run an implementation as folllows
-
-Run the bash script create_env.sh to activate the python venv
+The instructions below tell you how to run any of the models descriped in the report.
 
 To run Dynamics-Based Action Projection: run $python3 
 
