@@ -11,8 +11,11 @@ This folder contains `.xml` files corresponding to certain environments used in 
 
 ## Running The Project
 You can run an implementation as folllows
-1. Run the bash script create_env.sh to activate the python venv
-2.
-  a. To run Dynamics-Based Action Projection: run $python3 
-  b. To run Lyapunov-Based Action Projection trained on entire trajectories: run $python3 train-and-eval-trajectory-based.py to run the Trajectory Based
-  c. To run Lyapunov-Based Action Projection trained on individual trajectory steps: run $python3 
+
+Run the bash script create_env.sh to activate the python venv
+
+To run Dynamics-Based Action Projection: run $python3 
+
+To run Lyapunov-Based Action Projection trained on entire trajectories: run $python3 train-and-eval-trajectory-based.py to run the Trajectory Based
+
+To run Lyapunov-Based Action Projection trained on individual trajectory steps: run $python3 
