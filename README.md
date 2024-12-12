@@ -9,3 +9,7 @@ This installs all requirements and creates a properly named virtual environment.
 ### /mujoco environments/
 This folder contains `.xml` files corresponding to certain environments used in the training/testing processes. The format of these environment files follows the [Mujoco XML reference](https://mujoco.readthedocs.io/en/latest/XMLreference.html).
 
+## Running The Project
+You can run an implementation as folllows
+1. Run the bash script to activate the python venv
+
