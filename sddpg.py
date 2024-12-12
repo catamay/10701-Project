@@ -88,7 +88,7 @@ class SafetyLayer(nn.Module):
         lambda_star = torch.relu((torch.dot(gL, action - action_prev) - self.aux)/torch.linalg.vector_norm(gL)**2)
         grad_update = lambda_star * gL
 
-        return (action - grad_update).detach()
+        return (action + grad_update).detach()
 
 # Safe Deep Deterministic Policy Gradient
 class SDDPG:

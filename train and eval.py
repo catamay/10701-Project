@@ -21,7 +21,7 @@ parser = argparse.ArgumentParser(description='Train or Load.')
 parser.add_argument('--no_train', default=False, action='store_true',
                     help='Don\'t train the model')
 parser.add_argument('--save', dest='save', default='name', help='Designate saved file name, defaults to name')
-parser.add_argument('--safe', dest='safe', default=True, help='Designate model. Defaults to sDDPG')
+parser.add_argument('--safe', dest='safe', default=True, action='store_false',help='Designate model. Defaults to sDDPG')
 parser.add_argument('--path', dest='path',
                     help='Designate path file. You MUST provide a path if you passed in --no_train')
 
@@ -86,6 +86,7 @@ def train(episode, eps_start, eps_end, eps_decay, criterion_critic, agent, memor
 
     episode_loss = 0
     episode_reward = 0
+    max_vel = 0
     while True:
         # Select an action in the current state and
         # add the resulting observations to the
@@ -102,7 +103,7 @@ def train(episode, eps_start, eps_end, eps_decay, criterion_critic, agent, memor
         episode_reward += reward
         reward = torch.tensor([reward], device=device, dtype=torch.float32)
         done = terminated or truncated
-
+        max_vel = max(np.abs(observation[1]), max_vel)
         next_state = None if terminated else observation.float().unsqueeze(0)
         memory.push(state, action.unsqueeze(0), next_state, reward)
 
@@ -110,7 +111,7 @@ def train(episode, eps_start, eps_end, eps_decay, criterion_critic, agent, memor
         agent.update(memory, criterion_critic)
 
         if done:
-            return episode_reward
+            return episode_reward, max_vel
 
 if training:
     if path is not None:
@@ -120,11 +121,11 @@ if training:
     losses = []
 
     for i_episode in (pbar := tqdm(range(N_EPISODES))):
-        episode_reward = train(i_episode, EPS_START, EPS_END, EPS_DECAY, criterion_critic, agent, memory, env, device=device)
+        episode_reward, max_vel = train(i_episode, EPS_START, EPS_END, EPS_DECAY, criterion_critic, agent, memory, env, device=device)
         losses.append(episode_reward)
-        if i_episode>5:
-            pbar.set_postfix({
-                    'average last 5 rewards': round(np.mean(losses[-6:-1]), 5),
+        pbar.set_postfix({
+                    'average last 5 rewards': round(losses[i_episode], 5),
+                    'max_vel': round(max_vel.item(), 3),
                     })
 
 
@@ -134,7 +135,7 @@ if training:
     ax.plot(losses)
     ax.set_xlabel("Episode")
     ax.set_ylabel("Loss")
-    fig.suptitle("Training loss over time")
+    fig.suptitle("Training loss over time (DDPG)")
     if os.path.isdir('figures') is False:
                 os.mkdir('figures')
     fig.savefig(f"figures/{file_name}_losses.png")
@@ -147,6 +148,7 @@ else:
 
 
 num_eval_episodes=5
+i
 # env = RecordEpisodeStatistics(env, buffer_length=num_eval_episodes)
 # env = RecordVideo(env, video_folder="video_renders", name_prefix=f"cheetah_{file_name}", episode_trigger=lambda _: True)
 fig = plt.figure()
@@ -166,7 +168,7 @@ for episode_num in range(num_eval_episodes):
 
         obs, reward, terminated, truncated, info = env.step(action)
         done = terminated or truncated
-        velocities[episode_num, t] = (obs[1]).item()
+        velocities[episode_num, t] = obs[1].item()
         t+=1
 
 T = np.arange(0,max_steps)
@@ -178,15 +180,15 @@ min_vol = np.min(velocities, axis=0)
 
 ax.plot(T,mean_vol, 'b-', label='angle mean')
 ax.fill_between(T, min_vol, max_vol, alpha=0.5)
-ax.plot(T, [np.pi/4]*max_steps, 'k', label='Head Angle Constraint')
-ax.plot(T, [-np.pi/4]*max_steps, 'k')
+ax.plot(T, [np.pi/4]*max_steps, 'k', label='vel Constraint')
+ax.plot(T, [-np.pi/4]*max_steps, 'k',)
 
 ax.set_xlabel("Timestep")
 ax.set_ylabel(r"Tip Angle ($\theta$ radians)")
 ax.legend()
-fig.suptitle(f"Angle of head from {num_eval_episodes} eval episodes")
+fig.suptitle(f"Angle of head from {num_eval_episodes} eval episodes (DPPG)")
 if os.path.isdir('figures') is False:
     os.mkdir('figures')
-fig.savefig(f"figures/{file_name}_angle.png")
+fig.savefig(f"figures/{file_name}_velocity.png")
 
 env.close()
