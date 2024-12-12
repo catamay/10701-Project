@@ -16,8 +16,6 @@ import torch.nn as nn
 import torch.optim as optim
 import matplotlib.pyplot as plt
 
-import seaborn as sns
-import pandas as pd
 
 parser = argparse.ArgumentParser(description='Train or Load.')
 parser.add_argument('--no_train', default=False, action='store_true',
@@ -29,8 +27,8 @@ parser.add_argument('--path', dest='path',
 
 args = parser.parse_args()
 
-
-train = not args.no_train
+print(args)
+training = not args.no_train
 
 path = args.path
 
@@ -114,20 +112,20 @@ def train(episode, eps_start, eps_end, eps_decay, criterion_critic, agent, memor
         if done:
             return episode_reward
 
-if train:
+if training:
     if path is not None:
         agent.load(path)
     criterion_critic = nn.MSELoss()
     memory = memory.ReplayMemory(MEMORY_SIZE)
     losses = []
 
-for i_episode in (pbar := tqdm(range(N_EPISODES))):
-    episode_reward = train(i_episode, EPS_START, EPS_END, EPS_DECAY, criterion_critic, agent, memory, env, device=device)
-    losses.append(episode_reward)
-    if i_episode>5:
-        pbar.set_postfix({
-                'average last 5 rewards': round(np.mean(losses[-6:-1]), 5),
-                })
+    for i_episode in (pbar := tqdm(range(N_EPISODES))):
+        episode_reward = train(i_episode, EPS_START, EPS_END, EPS_DECAY, criterion_critic, agent, memory, env, device=device)
+        losses.append(episode_reward)
+        if i_episode>5:
+            pbar.set_postfix({
+                    'average last 5 rewards': round(np.mean(losses[-6:-1]), 5),
+                    })
 
 
     print("Training completed.")
@@ -149,8 +147,8 @@ else:
 
 
 num_eval_episodes=5
-env = RecordEpisodeStatistics(env, buffer_length=num_eval_episodes)
-env = RecordVideo(env, video_folder="video_renders", name_prefix=f"cheetah_{file_name}", episode_trigger=lambda _: True)
+# env = RecordEpisodeStatistics(env, buffer_length=num_eval_episodes)
+# env = RecordVideo(env, video_folder="video_renders", name_prefix=f"cheetah_{file_name}", episode_trigger=lambda _: True)
 fig = plt.figure()
 ax  = fig.subplots(1)
 velocities = np.zeros((num_eval_episodes, max_steps))
@@ -163,22 +161,28 @@ for episode_num in range(num_eval_episodes):
     if(isinstance(agent, sddpg.SDDPG)):
         agent.set_init(x0)
     while not done:
-        state = obs.unsqueeze(0)
+        state = obs.unsqueeze(0).float()
         action = agent.select_action(state)
 
         obs, reward, terminated, truncated, info = env.step(action)
         done = terminated or truncated
-        velocities[episode_num, t] = torch.abs(obs[1]).item()
+        velocities[episode_num, t] = (obs[1]).item()
         t+=1
 
 T = np.arange(0,max_steps)
+
 mean_vol = np.mean(velocities,axis=0)
-moving_avg = np.convolve(mean_vol, np.ones(5), 'same')/5
-std_vol = np.std(velocities, axis=0)
+max_vol = np.max(velocities,axis=0)
+min_vol = np.min(velocities, axis=0)
 
-ax.plot(T,moving_avg, 'b-', label='smoothed angle mean')
-ax.fill_between(T,moving_avg - std_vol, moving_avg + std_vol, color='b', alpha=0.2)
 
+ax.plot(T,mean_vol, 'b-', label='angle mean')
+ax.fill_between(T, min_vol, max_vol, alpha=0.5)
+ax.plot(T, [np.pi/4]*max_steps, 'k', label='Head Angle Constraint')
+ax.plot(T, [-np.pi/4]*max_steps, 'k')
+
+ax.set_xlabel("Timestep")
+ax.set_ylabel(r"Tip Angle ($\theta$ radians)")
 ax.legend()
 fig.suptitle(f"Angle of head from {num_eval_episodes} eval episodes")
 if os.path.isdir('figures') is False:
