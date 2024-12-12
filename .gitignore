@@ -1,3 +1,5 @@
 /.venv/*
 /video_renders/*
+/figures/*
+/models/*
 .git_credentials
