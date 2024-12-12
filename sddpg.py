@@ -90,10 +90,10 @@ class SafetyLayer(nn.Module):
         actions_prev = torch.cat(actions_prev)
         gL = torch.cat(gL)
 
-        # lambda_star = torch.relu((torch.dot(gL, action - actions_prev) - self.aux)/torch.linalg.vector_norm(gL)**2)
-        # grad_update = lambda_star * gL
+        lambda_star = torch.relu(((gL*(action - actions_prev)).sum(dim=1) - self.aux)/(gL * gL).sum(dim=1))
+        grad_update = lambda_star * gL
 
-        return (action - grad_update).detach()
+        return (action + grad_update).detach()
 
 # Safe Deep Deterministic Policy Gradient
 class SDDPG:
@@ -150,7 +150,7 @@ class SDDPG:
         action = self.actor_local(obs)
         safe_action = self.safety_layer(obs, action)
 
-        return safe_action.squeeze(0)
+        return safe_action
             
 
     def update(self, memory, criterion_critic):
@@ -194,7 +194,7 @@ class SDDPG:
         critic_loss = criterion_critic(q_values, target_q_values)
         const_critic_loss = criterion_critic(safe_q_values, target_safe_q_values)
 
-        loss = critic_loss
+        loss = critic_loss+const_critic_loss
 
         loss.backward()
 

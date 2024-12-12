@@ -23,9 +23,9 @@ import matplotlib.pyplot as plt
 
 
     # Hyperparameters
-N_EPISODES = 200
+N_EPISODES = 2000
 BATCH_SIZE = 120
-ASYNC_SIZE = 12
+ASYNC_SIZE = 10
 SYNC_SIZE = BATCH_SIZE//ASYNC_SIZE
 
 MEMORY_SIZE = 1000000
@@ -42,7 +42,7 @@ d0 = 50
 
 
 def d(x: torch.tensor):
-    return (x[:,8] <=1).unsqueeze(-1).to(device)
+    return (torch.abs(x[:,1]) <=1).unsqueeze(-1).to(device)
 
 @ray.remote
 class Simulator(object):
@@ -70,9 +70,11 @@ class Simulator(object):
                     action = torch.tensor(self.env.action_space.sample()).to(device)
 
                 else:
-                    action = agent.select_action(cur_state)
+                    action = agent.select_action(cur_state).squeeze(0)
+                    
 
                 observation, reward, terminated, truncated, _ = self.env.step(action.numpy(force=True))
+
                 traj_reward += reward
                 reward = torch.tensor(reward, device=device, dtype=torch.float32)
 
@@ -87,7 +89,7 @@ class Simulator(object):
             t=0
             memory.push(torch.cat(states), torch.cat(actions), torch.cat(next_states), torch.cat(rewards))
 
-        return traj_reward
+        return traj_reward / batch_size
 
 def train(episode, eps_start, eps_end, eps_decay, criterion_critic, agent, memory, init_env, sim, device=torch.device("cpu")):
     state, info = init_env.reset()
@@ -207,6 +209,7 @@ def main():
     for episode_num in range(num_eval_episodes):
         obs, _ = env.reset()
         x0 = obs.float().unsqueeze(0)
+        norm_actions = []
 
         done = False
         t=0
@@ -214,11 +217,10 @@ def main():
             agent.set_init(x0)
         while not done:
             state = obs.unsqueeze(0).float()
-            action = agent.select_action(state)
-
+            action = agent.select_action(state).squeeze(0)
             obs, reward, terminated, truncated, info = env.step(action)
             done = terminated or truncated
-            velocities[episode_num, t] = torch.abs(obs[1]).item()
+            velocities[episode_num, t] = obs[1]
             t+=1
 
     T = np.arange(0,max_steps)
