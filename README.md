@@ -12,7 +12,7 @@ This folder contains `.xml` files corresponding to certain environments used in 
 ## Running The Project
 The instructions below tell you how to run any of the models described in the report.
 
-To run Dynamics-Based Action Projection: $python3 
+To run Dynamics-Based Action Projection: $python3 'train and eval_dynamic.py'
 
 To run Lyapunov-Based Action Projection trained on entire trajectories: $python3 train-and-eval-trajectory-based.py
 
